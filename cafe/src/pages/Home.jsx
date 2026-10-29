@@ -54,13 +54,13 @@ function Home({ addToCart }) {
       <section className="mx-auto grid max-w-7xl items-center gap-10 px-5 py-16 md:grid-cols-2 md:px-10 md:py-24">
         <div>
           <p className="mb-4 text-sm uppercase tracking-[0.3em] text-cafe-caramel">
-            Welcome to Café
+            Welcome to कॉफी कट्टा
           </p>
 
           <h1 className="font-heading text-5xl font-bold leading-tight text-cafe-brown md:text-7xl">
-            Good Coffee.
+            Good Coffee
             <br />
-            Good Moments.
+            Good Moments
           </h1>
 
           <p className="mt-6 max-w-lg leading-8 text-gray-600">
