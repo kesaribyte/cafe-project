@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import getMenuProducts from "../data/getMenuProducts";
+import fetchAppwriteProducts from "../data/fetchAppwriteProducts";
 
 const PRODUCT_FALLBACK_IMAGE =
   "https://placehold.co/600x400?text=Cafe+Product";
@@ -10,21 +11,41 @@ function Menu({ addToCart, cartItems = [] }) {
   const [menuProducts, setMenuProducts] = useState(() =>
     getMenuProducts()
   );
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    function refreshProducts() {
-      setMenuProducts(getMenuProducts());
+    let isMounted = true;
+
+    async function loadProducts() {
+      try {
+        const appwriteProducts = await fetchAppwriteProducts();
+
+        if (!isMounted) return;
+
+        // Use Appwrite when it has products.
+        // Preserve the existing menu if the table is empty.
+        setMenuProducts(
+          appwriteProducts.length > 0
+            ? appwriteProducts
+            : getMenuProducts()
+        );
+      } catch (error) {
+        console.error("Could not load Appwrite products:", error);
+
+        if (isMounted) {
+          setMenuProducts(getMenuProducts());
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     }
 
-    // Refresh when another browser tab changes the products.
-    window.addEventListener("storage", refreshProducts);
-
-    // Refresh when the browser window regains focus.
-    window.addEventListener("focus", refreshProducts);
+    loadProducts();
 
     return () => {
-      window.removeEventListener("storage", refreshProducts);
-      window.removeEventListener("focus", refreshProducts);
+      isMounted = false;
     };
   }, []);
 
@@ -49,7 +70,6 @@ function Menu({ addToCart, cartItems = [] }) {
   return (
     <main className="min-h-screen bg-cafe-cream px-5 py-12 md:px-10">
       <div className="mx-auto max-w-7xl">
-        {/* Page Heading */}
         <div className="mb-10 text-center">
           <p className="mb-3 text-sm uppercase tracking-[0.3em] text-cafe-caramel">
             Made with love
@@ -65,8 +85,16 @@ function Menu({ addToCart, cartItems = [] }) {
           </p>
         </div>
 
-        {/* Product List */}
-        {validProducts.length === 0 ? (
+        {loading && (
+          <p
+            role="status"
+            className="mb-6 text-center text-sm text-gray-600"
+          >
+            Loading our menu...
+          </p>
+        )}
+
+        {validProducts.length === 0 && !loading ? (
           <div className="rounded-xl bg-white p-10 text-center shadow-sm">
             <h2 className="text-xl font-bold text-cafe-brown">
               No products available
@@ -80,10 +108,12 @@ function Menu({ addToCart, cartItems = [] }) {
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
             {validProducts.map((product) => {
               const cartItem = cartItems.find(
-                (item) => String(item.id) === String(product.id)
+                (item) =>
+                  String(item.id) === String(product.id)
               );
 
               const isAvailable = product.available !== false;
+
               const productUrl = `/menu/${encodeURIComponent(
                 String(product.id)
               )}`;
@@ -98,7 +128,9 @@ function Menu({ addToCart, cartItems = [] }) {
                     aria-label={`View ${product.name} details`}
                   >
                     <img
-                      src={product.image || PRODUCT_FALLBACK_IMAGE}
+                      src={
+                        product.image || PRODUCT_FALLBACK_IMAGE
+                      }
                       alt={product.name}
                       loading="lazy"
                       onError={(event) => {
@@ -137,7 +169,9 @@ function Menu({ addToCart, cartItems = [] }) {
                     <div className="mt-5 flex items-center justify-between gap-2">
                       <span className="text-lg font-bold text-cafe-brown">
                         ₹
-                        {Number(product.price || 0).toLocaleString("en-IN")}
+                        {Number(product.price || 0).toLocaleString(
+                          "en-IN"
+                        )}
                       </span>
 
                       <button
