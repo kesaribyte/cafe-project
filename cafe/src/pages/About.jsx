@@ -27,7 +27,7 @@ function About() {
           </h1>
 
           <p className="mt-6 leading-8 text-gray-600">
-            At Café, we believe the best moments often begin with a good
+            At कॉफी कट्टा, we believe the best moments often begin with a good
             cup of coffee and something delicious to share.
           </p>
 
