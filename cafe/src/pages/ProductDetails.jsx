@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import getMenuProducts from "../data/getMenuProducts";
+import fetchAppwriteProducts from "../data/fetchAppwriteProducts";
 
 const PRODUCT_FALLBACK_IMAGE =
   "https://placehold.co/600x400?text=Cafe+Product";
@@ -10,21 +11,56 @@ function ProductDetails({ addToCart, cartItems = [] }) {
   const { productId } = useParams();
 
   const [products, setProducts] = useState(() => getMenuProducts());
+  const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
   const [message, setMessage] = useState("");
   const [imageSrc, setImageSrc] = useState("");
 
   useEffect(() => {
-    function refreshProducts() {
-      setProducts(getMenuProducts());
+    let isMounted = true;
+
+    async function loadProducts() {
+      setLoading(true);
+
+      try {
+        const appwriteProducts = await fetchAppwriteProducts();
+
+        if (!isMounted) return;
+
+        setProducts(
+          appwriteProducts.length > 0
+            ? appwriteProducts
+            : getMenuProducts()
+        );
+      } catch (error) {
+        console.error(
+          "Could not load products from Appwrite:",
+          error
+        );
+
+        if (isMounted) {
+          setProducts(getMenuProducts());
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     }
 
-    window.addEventListener("storage", refreshProducts);
+    loadProducts();
+
+    function refreshProducts() {
+      loadProducts();
+    }
+
     window.addEventListener("focus", refreshProducts);
+    window.addEventListener("storage", refreshProducts);
 
     return () => {
-      window.removeEventListener("storage", refreshProducts);
+      isMounted = false;
       window.removeEventListener("focus", refreshProducts);
+      window.removeEventListener("storage", refreshProducts);
     };
   }, []);
 
@@ -44,7 +80,9 @@ function ProductDetails({ addToCart, cartItems = [] }) {
       )
     : null;
 
-  const isAvailable = product ? product.available !== false : false;
+  const isAvailable = product
+    ? product.available !== false
+    : false;
 
   function handleAddToCart() {
     if (!product) {
@@ -58,19 +96,29 @@ function ProductDetails({ addToCart, cartItems = [] }) {
     }
 
     if (typeof addToCart !== "function") {
-      setMessage("Unable to add this product to your bag. Please try again.");
+      setMessage(
+        "Unable to add this product to your bag. Please try again."
+      );
       return;
     }
 
     try {
       addToCart(product, quantity);
-      setMessage(
-        `${quantity} × ${product.name} added to your bag.`
-      );
+      setMessage(`${quantity} × ${product.name} added to your bag.`);
     } catch (error) {
       console.error("Could not add product to cart:", error);
       setMessage("Something went wrong. Please try again.");
     }
+  }
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-cafe-cream px-5">
+        <p role="status" className="text-cafe-brown">
+          Loading product details...
+        </p>
+      </main>
+    );
   }
 
   if (!product) {
