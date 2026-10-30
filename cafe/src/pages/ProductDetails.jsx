@@ -1,7 +1,6 @@
 
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import getMenuProducts from "../data/getMenuProducts";
 import fetchAppwriteProducts from "../data/fetchAppwriteProducts";
 
 const PRODUCT_FALLBACK_IMAGE =
@@ -10,8 +9,9 @@ const PRODUCT_FALLBACK_IMAGE =
 function ProductDetails({ addToCart, cartItems = [] }) {
   const { productId } = useParams();
 
-  const [products, setProducts] = useState(() => getMenuProducts());
+  const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [message, setMessage] = useState("");
   const [imageSrc, setImageSrc] = useState("");
@@ -19,27 +19,26 @@ function ProductDetails({ addToCart, cartItems = [] }) {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadProducts() {
-      setLoading(true);
-
+    async function loadProduct() {
       try {
-        const appwriteProducts = await fetchAppwriteProducts();
+        setLoading(true);
+        setError("");
+        setProduct(null);
+
+        const products = await fetchAppwriteProducts();
 
         if (!isMounted) return;
 
-        setProducts(
-          appwriteProducts.length > 0
-            ? appwriteProducts
-            : getMenuProducts()
-        );
-      } catch (error) {
-        console.error(
-          "Could not load products from Appwrite:",
-          error
+        const foundProduct = products.find(
+          (item) => String(item.id) === String(productId)
         );
 
+        setProduct(foundProduct || null);
+      } catch (err) {
+        console.error("Could not load product:", err);
+
         if (isMounted) {
-          setProducts(getMenuProducts());
+          setError("Unable to load this product. Please try again.");
         }
       } finally {
         if (isMounted) {
@@ -48,25 +47,12 @@ function ProductDetails({ addToCart, cartItems = [] }) {
       }
     }
 
-    loadProducts();
-
-    function refreshProducts() {
-      loadProducts();
-    }
-
-    window.addEventListener("focus", refreshProducts);
-    window.addEventListener("storage", refreshProducts);
+    loadProduct();
 
     return () => {
       isMounted = false;
-      window.removeEventListener("focus", refreshProducts);
-      window.removeEventListener("storage", refreshProducts);
     };
-  }, []);
-
-  const product = products.find(
-    (item) => String(item.id) === String(productId)
-  );
+  }, [productId]);
 
   useEffect(() => {
     setImageSrc(product?.image || PRODUCT_FALLBACK_IMAGE);
@@ -85,28 +71,18 @@ function ProductDetails({ addToCart, cartItems = [] }) {
     : false;
 
   function handleAddToCart() {
-    if (!product) {
-      setMessage("This product could not be found.");
-      return;
-    }
-
-    if (!isAvailable) {
-      setMessage("Sorry, this product is currently unavailable.");
-      return;
-    }
+    if (!product || !isAvailable) return;
 
     if (typeof addToCart !== "function") {
-      setMessage(
-        "Unable to add this product to your bag. Please try again."
-      );
+      setMessage("Unable to add this product to your bag.");
       return;
     }
 
     try {
       addToCart(product, quantity);
       setMessage(`${quantity} × ${product.name} added to your bag.`);
-    } catch (error) {
-      console.error("Could not add product to cart:", error);
+    } catch (err) {
+      console.error("Could not add product to cart:", err);
       setMessage("Something went wrong. Please try again.");
     }
   }
@@ -121,15 +97,15 @@ function ProductDetails({ addToCart, cartItems = [] }) {
     );
   }
 
-  if (!product) {
+  if (error || !product) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-cafe-cream px-5 text-center">
         <h1 className="text-3xl font-bold text-cafe-brown">
-          Product Not Found
+          {error ? "Unable to Load Product" : "Product Not Found"}
         </h1>
 
         <p className="mt-3 max-w-md text-gray-600">
-          This product may have been removed from our menu.
+          {error || "This product may have been removed from our menu."}
         </p>
 
         <Link
@@ -159,11 +135,7 @@ function ProductDetails({ addToCart, cartItems = [] }) {
           <img
             src={imageSrc || PRODUCT_FALLBACK_IMAGE}
             alt={product.name}
-            onError={() => {
-              if (imageSrc !== PRODUCT_FALLBACK_IMAGE) {
-                setImageSrc(PRODUCT_FALLBACK_IMAGE);
-              }
-            }}
+            onError={() => setImageSrc(PRODUCT_FALLBACK_IMAGE)}
             className={`h-80 w-full object-cover md:h-full md:min-h-[450px] ${
               !isAvailable ? "opacity-60" : ""
             }`}
@@ -205,16 +177,12 @@ function ProductDetails({ addToCart, cartItems = [] }) {
                     setMessage("");
                   }}
                   disabled={quantity <= 1 || !isAvailable}
-                  className="px-5 py-3 text-lg text-cafe-brown hover:bg-cafe-cream disabled:cursor-not-allowed disabled:opacity-40"
-                  aria-label="Decrease quantity"
+                  className="px-5 py-3 text-lg text-cafe-brown hover:bg-cafe-cream disabled:opacity-40"
                 >
                   −
                 </button>
 
-                <span
-                  className="min-w-12 text-center font-semibold text-cafe-brown"
-                  aria-live="polite"
-                >
+                <span className="min-w-12 text-center font-semibold text-cafe-brown">
                   {quantity}
                 </span>
 
@@ -225,8 +193,7 @@ function ProductDetails({ addToCart, cartItems = [] }) {
                     setMessage("");
                   }}
                   disabled={quantity >= 20 || !isAvailable}
-                  className="px-5 py-3 text-lg text-cafe-brown hover:bg-cafe-cream disabled:cursor-not-allowed disabled:opacity-40"
-                  aria-label="Increase quantity"
+                  className="px-5 py-3 text-lg text-cafe-brown hover:bg-cafe-cream disabled:opacity-40"
                 >
                   +
                 </button>
@@ -248,22 +215,17 @@ function ProductDetails({ addToCart, cartItems = [] }) {
               type="button"
               onClick={handleAddToCart}
               disabled={!isAvailable}
-              className={`mt-6 w-full rounded-md px-6 py-3 font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cafe-brown ${
+              className={`mt-6 w-full rounded-md px-6 py-3 font-medium text-white ${
                 !isAvailable
                   ? "cursor-not-allowed bg-gray-400"
                   : "bg-cafe-brown hover:bg-cafe-caramel"
               }`}
             >
-              {!isAvailable
-                ? "Currently Unavailable"
-                : `Add ${quantity} to Cart`}
+              {!isAvailable ? "Currently Unavailable" : `Add ${quantity} to Cart`}
             </button>
 
             {message && (
-              <p
-                role="status"
-                className="mt-3 text-sm text-green-700"
-              >
+              <p role="status" className="mt-3 text-sm text-green-700">
                 {message}
               </p>
             )}
