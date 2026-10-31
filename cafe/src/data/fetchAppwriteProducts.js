@@ -1,8 +1,9 @@
 
-import { tablesDB } from "../lib/appwrite";
+import { tablesDB, storage } from "../lib/appwrite";
 
 const databaseId = import.meta.env.VITE_APPWRITE_DATABASE_ID;
 const tableId = import.meta.env.VITE_APPWRITE_PRODUCTS_TABLE_ID;
+const bucketId = import.meta.env.VITE_APPWRITE_BUCKET_ID;
 
 export async function fetchAppwriteProducts() {
   if (!databaseId || !tableId) {
@@ -14,6 +15,8 @@ export async function fetchAppwriteProducts() {
   const response = await tablesDB.listRows({
     databaseId,
     tableId,
+    queries: [],
+    total: false,
   });
 
   return response.rows
@@ -25,17 +28,30 @@ export async function fetchAppwriteProducts() {
         Number.isFinite(Number(row.price)) &&
         Number(row.price) >= 0
     )
-    .map((row) => ({
-      id: row.$id,
-      name: row.name,
-      description: row.description || "",
-      price: Number(row.price),
-      category: row.category || "Other",
-      image: row.image || "",
-      imageId: row.imageId || "",
-      available: row.available !== false,
-      featured: row.featured === true,
-    }));
+    .map((row) => {
+      let image = row.image || "";
+
+      if (row.imageId && bucketId) {
+        image = storage
+          .getFileView({
+            bucketId,
+            fileId: row.imageId,
+          })
+          .toString();
+      }
+
+      return {
+        id: row.$id,
+        name: row.name,
+        description: row.description || "",
+        price: Number(row.price),
+        category: row.category || "Other",
+        image,
+        imageId: row.imageId || "",
+        available: row.available !== false,
+        featured: row.featured === true,
+      };
+    });
 }
 
 export default fetchAppwriteProducts;

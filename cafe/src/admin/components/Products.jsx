@@ -1,8 +1,12 @@
 
 import { useEffect, useState } from "react";
-import menuData from "../../data/menuData";
+import { ID } from "appwrite";
+import { tablesDB, storage } from "../../lib/appwrite";
+import { fetchAppwriteProducts } from "../../data/fetchAppwriteProducts";
 
-const STORAGE_KEY = "cafe-menu-products";
+const databaseId = import.meta.env.VITE_APPWRITE_DATABASE_ID;
+const tableId = import.meta.env.VITE_APPWRITE_PRODUCTS_TABLE_ID;
+const bucketId = import.meta.env.VITE_APPWRITE_BUCKET_ID;
 
 const emptyProduct = {
   name: "",
@@ -13,96 +17,69 @@ const emptyProduct = {
   available: true,
 };
 
-function getProducts() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-
-    if (saved !== null) {
-      const parsed = JSON.parse(saved);
-
-      if (!Array.isArray(parsed)) {
-        throw new Error("Saved products must be an array.");
-      }
-
-      return parsed
-        .filter(
-          (product) =>
-            product &&
-            typeof product === "object" &&
-            !Array.isArray(product) &&
-            product.id !== undefined &&
-            product.id !== null &&
-            typeof product.name === "string" &&
-            Number.isFinite(Number(product.price)) &&
-            Number(product.price) >= 0
-        )
-        .map((product) => ({
-          ...product,
-          price: Number(product.price),
-          available: product.available !== false,
-        }));
-    }
-  } catch (error) {
-    console.error("Could not load products:", error);
-  }
-
-  return menuData.map((product) => ({
-    ...product,
-    available: product.available !== false,
-  }));
-}
+const placeholder = "https://placehold.co/600x400?text=Cafe+Product";
 
 function formatPrice(price) {
   const amount = Number(price);
 
-  return `₹${(
-    Number.isFinite(amount) ? amount : 0
-  ).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return `₹${(Number.isFinite(amount) ? amount : 0).toLocaleString(
+    "en-IN",
+    {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }
+  )}`;
+}
+
+function getStorageImageUrl(fileId) {
+  if (!fileId || !bucketId) return "";
+
+  return storage
+    .getFileView({ bucketId, fileId })
+    .toString();
 }
 
 function Products() {
-  const [products, setProducts] = useState(getProducts);
+  const [products, setProducts] = useState([]);
   const [formData, setFormData] = useState({ ...emptyProduct });
+  const [selectedImage, setSelectedImage] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [previewUrl, setPreviewUrl] = useState("");
 
   useEffect(() => {
-    function handleStorage(event) {
-      if (event.key === STORAGE_KEY) {
-        setProducts(getProducts());
-      }
+    if (!selectedImage) {
+      setPreviewUrl("");
+      return;
     }
 
-    window.addEventListener("storage", handleStorage);
+    const url = URL.createObjectURL(selectedImage);
+    setPreviewUrl(url);
 
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-    };
-  }, []);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedImage]);
 
-  function saveProducts(nextProducts) {
+  async function loadProducts() {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(nextProducts)
-      );
-
-      setProducts(nextProducts);
       setSaveError("");
-      return true;
+      const data = await fetchAppwriteProducts();
+      setProducts(data);
     } catch (error) {
-      console.error("Could not save products:", error);
-      setSaveError(
-        "Could not save products. Check browser storage and try again."
-      );
-      return false;
+      console.error("Could not load products:", error);
+      setSaveError(error.message || "Could not load products.");
+    } finally {
+      setLoading(false);
     }
   }
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -116,15 +93,49 @@ function Products() {
     setSaveError("");
   }
 
-  function resetForm() {
-    setFormData({ ...emptyProduct });
-    setEditingId(null);
+  function handleImageChange(event) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    const allowedTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setSaveError("Please select a JPG, JPEG, PNG or WebP image.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setSaveError("Image size must be 5 MB or less.");
+      event.target.value = "";
+      return;
+    }
+
+    setSelectedImage(file);
     setMessage("");
     setSaveError("");
   }
 
-  function handleSubmit(event) {
+  function resetForm() {
+    setFormData({ ...emptyProduct });
+    setSelectedImage(null);
+    setEditingId(null);
+    setMessage("");
+    setSaveError("");
+
+    const input = document.getElementById("product-image-file");
+    if (input) input.value = "";
+  }
+
+  async function handleSubmit(event) {
     event.preventDefault();
+
     setMessage("");
     setSaveError("");
 
@@ -155,47 +166,114 @@ function Products() {
       return;
     }
 
-    let nextProducts;
-
-    if (editingId !== null) {
-      nextProducts = products.map((product) =>
-        String(product.id) === String(editingId)
-          ? {
-              ...product,
-              name,
-              category: formData.category,
-              price,
-              image: image || product.image || "",
-              description,
-              available: formData.available !== false,
-            }
-          : product
-      );
-    } else {
-      const newProduct = {
-        ...formData,
-        id: `product-${Date.now()}`,
-        name,
-        price,
-        image:
-          image ||
-          "https://placehold.co/600x400?text=Cafe+Product",
-        description,
-        available: true,
-      };
-
-      nextProducts = [...products, newProduct];
+    if (!databaseId || !tableId) {
+      setSaveError("Appwrite database or products table ID is missing.");
+      return;
     }
 
-    if (saveProducts(nextProducts)) {
+    if (selectedImage && !bucketId) {
+      setSaveError("Appwrite Storage bucket ID is missing from .env.");
+      return;
+    }
+
+    const existingProduct = products.find(
+      (product) => String(product.id) === String(editingId)
+    );
+
+    let newUploadedFileId = "";
+
+    try {
+      setSaving(true);
+
+      let imageId = existingProduct?.imageId || "";
+      let imageUrl = image;
+
+      // Upload a new image when the admin selects a file.
+      if (selectedImage) {
+        const uploadedFile = await storage.createFile({
+          bucketId,
+          fileId: ID.unique(),
+          file: selectedImage,
+        });
+
+        newUploadedFileId = uploadedFile.$id;
+        imageId = uploadedFile.$id;
+        imageUrl = getStorageImageUrl(imageId);
+      }
+
+      const productData = {
+        name,
+        category: formData.category,
+        price,
+        image: imageUrl,
+        imageId,
+        description,
+        available:
+          editingId !== null
+            ? formData.available !== false
+            : true,
+        featured: existingProduct?.featured === true,
+      };
+
+      if (editingId !== null) {
+        await tablesDB.updateRow({
+          databaseId,
+          tableId,
+          rowId: editingId,
+          data: productData,
+        });
+      } else {
+        await tablesDB.createRow({
+          databaseId,
+          tableId,
+          rowId: ID.unique(),
+          data: productData,
+        });
+      }
+
+      // Delete the previous Storage image only after the database
+      // successfully saves the replacement.
+      if (
+        newUploadedFileId &&
+        existingProduct?.imageId &&
+        existingProduct.imageId !== newUploadedFileId
+      ) {
+        try {
+          await storage.deleteFile({
+            bucketId,
+            fileId: existingProduct.imageId,
+          });
+        } catch (deleteError) {
+          console.error("Could not delete previous image:", deleteError);
+        }
+      }
+
       setMessage(
         editingId !== null
           ? "Product updated successfully."
           : "Product added successfully."
       );
 
-      setFormData({ ...emptyProduct });
-      setEditingId(null);
+      resetForm();
+      await loadProducts();
+    } catch (error) {
+      console.error("Could not save product:", error);
+
+      // Remove an uploaded file if saving the product row failed.
+      if (newUploadedFileId) {
+        try {
+          await storage.deleteFile({
+            bucketId,
+            fileId: newUploadedFileId,
+          });
+        } catch (cleanupError) {
+          console.error("Could not clean up uploaded image:", cleanupError);
+        }
+      }
+
+      setSaveError(error.message || "Could not save product.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -211,42 +289,76 @@ function Products() {
       available: product.available !== false,
     });
 
+    setSelectedImage(null);
     setMessage("");
     setSaveError("");
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function handleDelete(productId) {
+  async function handleDelete(product) {
     if (!window.confirm("Are you sure you want to delete this product?")) {
       return;
     }
 
-    const nextProducts = products.filter(
-      (product) => String(product.id) !== String(productId)
-    );
+    try {
+      setSaveError("");
+      setMessage("");
 
-    if (saveProducts(nextProducts)) {
-      if (String(editingId) === String(productId)) {
-        setFormData({ ...emptyProduct });
-        setEditingId(null);
+      await tablesDB.deleteRow({
+        databaseId,
+        tableId,
+        rowId: product.id,
+      });
+
+      if (product.imageId && bucketId) {
+        try {
+          await storage.deleteFile({
+            bucketId,
+            fileId: product.imageId,
+          });
+        } catch (imageError) {
+          console.error("Product deleted, but image cleanup failed:", imageError);
+          setMessage(
+            "Product deleted, but its Storage image could not be deleted."
+          );
+        }
       }
 
-      setMessage("Product deleted successfully.");
+      if (String(editingId) === String(product.id)) {
+        resetForm();
+      }
+
+      if (!product.imageId || !bucketId) {
+        setMessage("Product deleted successfully.");
+      }
+
+      await loadProducts();
+    } catch (error) {
+      console.error("Could not delete product:", error);
+      setSaveError(error.message || "Could not delete product.");
     }
   }
 
-  function toggleAvailability(productId) {
-    const nextProducts = products.map((product) =>
-      String(product.id) === String(productId)
-        ? {
-            ...product,
-            available: product.available === false,
-          }
-        : product
-    );
+  async function toggleAvailability(product) {
+    try {
+      setSaveError("");
+      setMessage("");
 
-    if (saveProducts(nextProducts)) {
+      await tablesDB.updateRow({
+        databaseId,
+        tableId,
+        rowId: product.id,
+        data: {
+          available: product.available === false,
+        },
+      });
+
       setMessage("Product availability updated.");
+      await loadProducts();
+    } catch (error) {
+      console.error("Could not update availability:", error);
+      setSaveError(error.message || "Could not update availability.");
     }
   }
 
@@ -254,8 +366,7 @@ function Products() {
 
   const filteredProducts = products.filter((product) =>
     [product.name, product.category, product.description].some(
-      (value) =>
-        String(value || "").toLowerCase().includes(searchTerm)
+      (value) => String(value || "").toLowerCase().includes(searchTerm)
     )
   );
 
@@ -276,7 +387,10 @@ function Products() {
       </div>
 
       {saveError && (
-        <p role="alert" className="mb-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+        <p
+          role="alert"
+          className="mb-5 rounded-lg bg-red-50 p-4 text-sm text-red-700"
+        >
           {saveError}
         </p>
       )}
@@ -288,7 +402,10 @@ function Products() {
 
         <form onSubmit={handleSubmit} className="grid gap-5 md:grid-cols-2">
           <div>
-            <label htmlFor="product-name" className="mb-2 block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="product-name"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
               Product Name *
             </label>
             <input
@@ -304,7 +421,10 @@ function Products() {
           </div>
 
           <div>
-            <label htmlFor="product-category" className="mb-2 block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="product-category"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
               Category *
             </label>
             <select
@@ -324,7 +444,10 @@ function Products() {
           </div>
 
           <div>
-            <label htmlFor="product-price" className="mb-2 block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="product-price"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
               Price (₹) *
             </label>
             <input
@@ -343,8 +466,11 @@ function Products() {
           </div>
 
           <div>
-            <label htmlFor="product-image" className="mb-2 block text-sm font-medium text-gray-700">
-              Image URL
+            <label
+              htmlFor="product-image"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
+              Image URL (optional)
             </label>
             <input
               id="product-image"
@@ -358,7 +484,44 @@ function Products() {
           </div>
 
           <div className="md:col-span-2">
-            <label htmlFor="product-description" className="mb-2 block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="product-image-file"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
+              Upload Product Image (JPG, PNG, WebP — max 5 MB)
+            </label>
+            <input
+              id="product-image-file"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleImageChange}
+              className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm"
+            />
+
+            {selectedImage && (
+              <p className="mt-2 text-sm text-gray-500">
+                Selected: {selectedImage.name}
+              </p>
+            )}
+
+            {(previewUrl || (editingId !== null && formData.image)) && (
+              <img
+                src={previewUrl || formData.image}
+                alt="Product preview"
+                className="mt-4 h-40 w-40 rounded-lg border object-cover"
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = placeholder;
+                }}
+              />
+            )}
+          </div>
+
+          <div className="md:col-span-2">
+            <label
+              htmlFor="product-description"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
               Description
             </label>
             <textarea
@@ -393,19 +556,34 @@ function Products() {
           )}
 
           <div className="flex flex-wrap gap-3 md:col-span-2">
-            <button type="submit" className="rounded-lg bg-[#40291F] px-6 py-3 font-medium text-white hover:bg-[#B77945]">
-              {editingId !== null ? "Save Changes" : "Add Product"}
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-lg bg-[#40291F] px-6 py-3 font-medium text-white hover:bg-[#B77945] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving
+                ? "Saving..."
+                : editingId !== null
+                  ? "Save Changes"
+                  : "Add Product"}
             </button>
 
             {editingId !== null && (
-              <button type="button" onClick={resetForm} className="rounded-lg border border-gray-200 px-6 py-3 text-gray-600 hover:bg-gray-50">
+              <button
+                type="button"
+                onClick={resetForm}
+                className="rounded-lg border border-gray-200 px-6 py-3 text-gray-600 hover:bg-gray-50"
+              >
                 Cancel
               </button>
             )}
           </div>
 
           {message && (
-            <p role="status" className="text-sm text-[#80552F] md:col-span-2">
+            <p
+              role="status"
+              className="text-sm text-[#80552F] md:col-span-2"
+            >
               {message}
             </p>
           )}
@@ -427,21 +605,28 @@ function Products() {
         />
       </div>
 
-      {filteredProducts.length === 0 ? (
+      {loading ? (
+        <div className="rounded-xl bg-white p-10 text-center text-gray-500">
+          Loading products from Appwrite...
+        </div>
+      ) : filteredProducts.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center text-gray-500">
           No products found.
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {filteredProducts.map((product) => (
-            <div key={product.id} className="overflow-hidden rounded-xl bg-white shadow-sm">
+            <div
+              key={product.id}
+              className="overflow-hidden rounded-xl bg-white shadow-sm"
+            >
               <img
-                src={product.image || "https://placehold.co/600x400?text=Cafe+Product"}
+                src={product.image || placeholder}
                 alt={product.name || "Café product"}
                 loading="lazy"
                 onError={(event) => {
                   event.currentTarget.onerror = null;
-                  event.currentTarget.src = "https://placehold.co/600x400?text=Cafe+Product";
+                  event.currentTarget.src = placeholder;
                 }}
                 className="h-48 w-full object-cover"
               />
@@ -451,12 +636,17 @@ function Products() {
                   <p className="text-xs uppercase tracking-wider text-[#B77945]">
                     {product.category || "Other"}
                   </p>
-                  <span className={`rounded-full px-3 py-1 text-xs font-medium ${
-                    product.available === false
-                      ? "bg-red-100 text-red-700"
-                      : "bg-green-100 text-green-700"
-                  }`}>
-                    {product.available === false ? "Unavailable" : "Available"}
+
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-medium ${
+                      product.available === false
+                        ? "bg-red-100 text-red-700"
+                        : "bg-green-100 text-green-700"
+                    }`}
+                  >
+                    {product.available === false
+                      ? "Unavailable"
+                      : "Available"}
                   </span>
                 </div>
 
@@ -474,14 +664,16 @@ function Products() {
 
                 <button
                   type="button"
-                  onClick={() => toggleAvailability(product.id)}
+                  onClick={() => toggleAvailability(product)}
                   className={`mt-4 w-full rounded-lg px-4 py-2 text-sm font-medium ${
                     product.available === false
                       ? "bg-green-100 text-green-700 hover:bg-green-200"
                       : "bg-red-100 text-red-700 hover:bg-red-200"
                   }`}
                 >
-                  {product.available === false ? "Mark Available" : "Mark Unavailable"}
+                  {product.available === false
+                    ? "Mark Available"
+                    : "Mark Unavailable"}
                 </button>
 
                 <div className="mt-3 flex gap-3">
@@ -495,7 +687,7 @@ function Products() {
 
                   <button
                     type="button"
-                    onClick={() => handleDelete(product.id)}
+                    onClick={() => handleDelete(product)}
                     className="flex-1 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
                   >
                     Delete
